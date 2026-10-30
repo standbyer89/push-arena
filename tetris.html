@@ -25,11 +25,15 @@
   .opp .on i { font-style:normal; color:#ff8a80; margin-left:auto; }
   .opp { cursor:pointer; } .opp.dead { opacity:.5; cursor:default; }
   .opp.tg canvas { outline:2px solid var(--accent); outline-offset:1px; } .opp.tg .on span:first-child::before { content:"🎯"; }
+  /* 폰 세로 화면: 상대 판은 오른쪽 열 아래쪽에 작게 */
+  .compact #opps { position:absolute; left:82.75%; width:14%; top:27.1%; flex-direction:column; justify-content:flex-start; gap:4px; z-index:2; }
+  .compact .opp { width:100%; } .compact .opp .on { height:13px; font-size:9px; gap:1px; } .compact .opp .on span:nth-child(2) { display:none; }
+  .compact canvas.mc { width:100%; border-radius:3px; }
   canvas { display:block; }
   canvas.mc { width:var(--mw); aspect-ratio:1/2; border-radius:6px; background:#0b0e24; }
   #wrap { position:relative; width:var(--cw); }
   #cv { width:100%; aspect-ratio:470/620; border-radius:14px; background:#0b0e24; }
-  #ov { position:absolute; inset:0; display:none; align-items:center; justify-content:center; padding:8px; }
+  #ov { position:absolute; inset:0; display:none; align-items:center; justify-content:center; padding:8px; z-index:5; }
   #ov.on { display:flex; }
   .panel { width:100%; max-height:100%; overflow:auto; touch-action:pan-y; background:#0c0f2a; border:1px solid var(--line); border-radius:16px; padding:14px; display:flex; flex-direction:column; gap:9px; text-align:center; }
   .panel h1 { margin:0; font-size:24px; } .panel h2 { margin:0; font-size:19px; }
@@ -50,11 +54,17 @@
   .slot.off { opacity:.4; border-style:dashed; } .slot small { margin-left:auto; color:var(--muted); }
   .rk { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:10px; border:1px solid var(--line); background:var(--card); font-size:14px; }
   .rk.me { border-color:var(--accent); background:#ffd47922; } .rk small { margin-left:auto; color:var(--muted); font-size:11px; }
-  #touch { display:none; width:min(100%,420px); grid-template-columns:repeat(5,1fr); gap:6px; }
-  .touch #touch { display:grid; }
-  .tb { height:56px; border-radius:14px; border:1px solid var(--line); background:var(--card); font-size:22px; touch-action:none; }
-  .tb:active, .tb.dn { background:#ffd47944; border-color:var(--accent); }
-  .tb.w2 { grid-column:span 2; font-size:15px; } .tb.w3 { grid-column:span 3; font-size:15px; }
+  #touch { display:none; width:min(100%,460px); gap:10px; }
+  .touch #touch { display:flex; }
+  #stick { flex:1.2; height:136px; border-radius:68px; border:1px solid var(--line); background:var(--card); position:relative; touch-action:none; overflow:hidden; }
+  #stick .ar { position:absolute; color:#ffffff45; font-size:18px; pointer-events:none; }
+  #stick .l { left:16px; top:50%; transform:translateY(-50%); } #stick .r { right:16px; top:50%; transform:translateY(-50%); } #stick .d { bottom:8px; left:50%; transform:translateX(-50%); }
+  #knob { position:absolute; left:50%; top:50%; width:56px; height:56px; margin:0; border-radius:50%; background:#ffd47944; border:2px solid var(--accent); transform:translate(-50%,-50%); pointer-events:none; }
+  #btns { flex:1; display:flex; flex-direction:column; gap:6px; }
+  .pair { flex:1; display:flex; gap:6px; }
+  .tb { border-radius:14px; border:1px solid var(--line); background:var(--card); font-size:15px; touch-action:none; }
+  .tb.sm { height:34px; } .tb.big { flex:1; font-size:28px; }
+  .tb:active { background:#ffd47944; border-color:var(--accent); }
   #hint { font-size:12px; color:var(--muted); text-align:center; }
   .touch #hint { display:none; }
 </style>
@@ -72,22 +82,21 @@
     <div id="wrap"><canvas id="cv"></canvas><div id="ov"></div></div>
   </div>
   <div id="touch">
-    <button class="tb" data-h="left">◀</button>
-    <button class="tb" data-h="down">▼</button>
-    <button class="tb" data-h="right">▶</button>
-    <button class="tb" data-p="ccw">⟲</button>
-    <button class="tb" data-p="cw">⟳</button>
-    <button class="tb w2" data-p="hold">보관</button>
-    <button class="tb w3" data-p="drop">⤓ 바로 내리기</button>
+    <div id="stick"><span class="ar l">◀</span><span class="ar r">▶</span><span class="ar d">▼</span><div id="knob"></div></div>
+    <div id="btns">
+      <button class="tb sm" data-p="hold">보관</button>
+      <div class="pair"><button class="tb big" data-p="cw">⟳</button><button class="tb big" data-p="drop">⤓</button></div>
+    </div>
   </div>
   <div id="hint">← → 이동 · ↓ 빨리 · ↑/X 회전 · Z 반대 회전 · Space 바로 내리기 · C 보관 · P 일시정지</div>
 </div>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
-const COLS = 10, ROWS = 22, HID = 2, VIS = 20, CELL = 30, W = 470, H = 620, BX = 16, BY = 10, SX = 330;
+const COLS = 10, ROWS = 22, HID = 2, VIS = 20, CELL = 30, H = 620, BX = 16, BY = 10;
+let W = 470, SX = 330;   // 그림 전체 너비와 오른쪽 열 위치 (폰 세로 화면은 오른쪽 열을 좁게 해서 판을 크게)
 const COARSE = matchMedia("(pointer:coarse)").matches;
-const DAS = .15, ARR = .04, LOCK = .5, MAX_RESET = 15, CLEAR_T = .28;
+const DAS = COARSE ? .17 : .15, ARR = COARSE ? .055 : .04, LOCK = .5, MAX_RESET = 15, CLEAR_T = .28;
 // 대전 규칙 — 테트리스 99 방식 (https://www.harddrop.com/wiki/Tetris_99, https://tetris.wiki/Combo)
 const LV_TIMES = [0, 10, 30, 50, 70, 90, 110, 130, 150, 170, 190];     // 이 시간(초)이 지나면 다음 속도 단계
 const LV_FRAMES = [60, 50, 40, 30, 20, 10, 8, 6, 4, 2, 1];             // 단계별로 한 칸 내려오는 데 걸리는 프레임 수 (60프레임 = 1초)
@@ -327,10 +336,12 @@ function fit() {
 }
 function layout() {
   const vw = innerWidth, vh = innerHeight, vs = document.body.classList.contains("vs");
-  const wide = vw >= 760 && vw > vh * 1.05; document.body.classList.toggle("wide", wide); document.body.classList.toggle("touch", COARSE);
-  let availH = vh - 44 - (COARSE ? 136 : 30) - 16, availW = vw - 16, mw = 74;
-  if (vs) { if (wide) { mw = 124; availW -= 2 * mw + 20; } else { availH -= 176; mw = 74; } }
-  const cw = Math.max(220, Math.min(availW, availH * W / H, 620));
+  const wide = vw >= 760 && vw > vh * 1.05; document.body.classList.toggle("wide", wide); document.body.classList.toggle("touch", COARSE); document.body.classList.toggle("compact", !wide);
+  W = wide ? 470 : 400; SX = wide ? 330 : 324; cv.style.aspectRatio = W + " / " + H;
+  const opps = $("opps"), home = wide ? $("stage") : $("wrap"); if (opps.parentNode !== home) home.appendChild(opps);   // 폰: 상대 판은 오른쪽 열 안에, 큰 화면: 판 옆에
+  let availH = vh - 40 - (COARSE ? 150 : 30) - 14, availW = vw - 16, mw = 124;
+  if (vs && wide) availW -= 2 * mw + 20;
+  const cw = Math.max(220, Math.min(availW, availH * W / H, 760));
   document.documentElement.style.setProperty("--cw", Math.floor(cw) + "px"); document.documentElement.style.setProperty("--mw", mw + "px");
   fit();
 }
@@ -351,6 +362,34 @@ function text(s, x, y, size, col, align = "left", weight = 700) {
 }
 function box(x, y, w, h) { ctx.fillStyle = "rgba(255,255,255,.06)"; ctx.fillRect(x, y, w, h); ctx.strokeStyle = "rgba(255,255,255,.14)"; ctx.lineWidth = 1; ctx.strokeRect(x + .5, y + .5, w - 1, h - 1); }
 
+// 오른쪽 열: 보관 · 다음(1개) · 기록. 폰 세로 화면은 좁은 열이고, 대결이면 그 아래에 상대 판이 놓인다
+function drawSide() {
+  if (!compact()) {
+    text("보관", SX, 24, 13, "#a9b0d9"); box(SX, 32, 130, 64);
+    if (hold) preview(hold, SX + 65, 64, 18, canHold ? 1 : .35);
+    text("다음", SX, 120, 13, "#a9b0d9"); box(SX, 128, 130, 64);
+    if (board) preview(queue[0], SX + 65, 160, 18);
+    const tgt = target != null && net.alive[target] ? EMO[target] + " " + NAME[target] : "🎲 무작위";
+    const stats = mode === "vs"
+      ? [["속도", "Lv." + level()], ["콤보", combo >= 1 ? combo + 1 : "-"], ["보낸 줄", atkSent], ["지운 줄", lines], ["공격 대상", tgt]]
+      : [["점수", score.toLocaleString()], ["레벨", level()], ["줄", lines], ["최고", Math.max(cfg.best, score).toLocaleString()]];
+    stats.forEach(([k, v], i) => { const y = 226 + i * 66; text(k, SX, y, 12, "#a9b0d9"); text(String(v), SX, y + (i === 4 ? 24 : 27), i === 4 ? 15 : 24, i === 0 ? "#ffd479" : "#eef0ff"); });
+    if (mode === "vs") { ctx.fillStyle = "rgba(255,255,255,.12)"; ctx.fillRect(SX, 226 + 38, 120, 4); ctx.fillStyle = "#ffd479"; ctx.fillRect(SX, 226 + 38, 120 * lvProgress(), 4); }
+    return;
+  }
+  text("보관", SX, 20, 11, "#a9b0d9"); box(SX, 26, 70, 54);
+  if (hold) preview(hold, SX + 35, 53, 13, canHold ? 1 : .35);
+  text("다음", SX, 98, 11, "#a9b0d9"); box(SX, 104, 70, 54);
+  if (board) preview(queue[0], SX + 35, 131, 13);
+  if (mode === "vs") {   // 상대 판(DOM)이 y 168~556 자리에 놓인다
+    text("속도 Lv." + level(), SX, 578, 12, "#ffd479"); ctx.fillStyle = "rgba(255,255,255,.12)"; ctx.fillRect(SX, 584, 70, 4); ctx.fillStyle = "#ffd479"; ctx.fillRect(SX, 584, 70 * lvProgress(), 4);
+    if (combo >= 1) text("콤보 " + (combo + 1), SX, 606, 12, "#ffb86b");
+  } else {
+    [["점수", score.toLocaleString()], ["레벨", level()], ["줄", lines], ["최고", Math.max(cfg.best, score).toLocaleString()]]
+      .forEach(([k, v], i) => { const y = 192 + i * 62; text(k, SX, y, 11, "#a9b0d9"); text(String(v), SX, y + 24, 17, i === 0 ? "#ffd479" : "#eef0ff"); });
+  }
+}
+const compact = () => W === 400;
 function draw() {
   ctx.setTransform(sc, 0, 0, sc, 0, 0); ctx.clearRect(0, 0, W, H);
   ctx.save(); if (shake > 0) ctx.translate((Math.random() - .5) * shake * 7, (Math.random() - .5) * shake * 7);
@@ -390,17 +429,7 @@ function draw() {
     ctx.globalAlpha = 1;
   });
   ctx.restore();
-  // 오른쪽 열
-  text("보관", SX, 24, 13, "#a9b0d9"); box(SX, 32, 130, 64);
-  if (hold) preview(hold, SX + 65, 64, 18, canHold ? 1 : .35);
-  text("다음", SX, 120, 13, "#a9b0d9"); box(SX, 128, 130, 64);
-  if (board) preview(queue[0], SX + 65, 160, 18);
-  const tgt = target != null && net.alive[target] ? EMO[target] + " " + NAME[target] : "🎲 무작위";
-  const stats = mode === "vs"
-    ? [["속도", "Lv." + level()], ["콤보", combo >= 1 ? combo + 1 : "-"], ["보낸 줄", atkSent], ["지운 줄", lines], ["공격 대상", tgt]]
-    : [["점수", score.toLocaleString()], ["레벨", level()], ["줄", lines], ["최고", Math.max(cfg.best, score).toLocaleString()]];
-  stats.forEach(([k, v], i) => { const y = 226 + i * 66; text(k, SX, y, 12, "#a9b0d9"); text(String(v), SX, y + (i === 4 ? 24 : 27), i === 4 ? 15 : 24, i === 0 ? "#ffd479" : "#eef0ff"); });
-  if (mode === "vs") { ctx.fillStyle = "rgba(255,255,255,.12)"; ctx.fillRect(SX, 226 + 38, 120, 4); ctx.fillStyle = "#ffd479"; ctx.fillRect(SX, 226 + 38, 120 * lvProgress(), 4); }
+  drawSide();
   // 가운데 안내
   const mid = BX + bw / 2;
   if (state === "count") text(String(Math.max(1, Math.ceil(cd))), mid, BY + 330, 110, "#ffd479", "center", 800);
@@ -457,13 +486,32 @@ addEventListener("keydown", e => {
 addEventListener("keyup", e => { const k = KEYS[e.code]; if (k && k[0] === "h") release(k[1]); });
 addEventListener("blur", clearHeld);
 document.addEventListener("visibilitychange", () => { if (document.hidden) { clearHeld(); if (mode === "solo" && state === "play") togglePause(); } });
-document.querySelectorAll(".tb").forEach(b => {
-  const h = b.dataset.h, p = b.dataset.p;
-  b.addEventListener("pointerdown", e => { e.preventDefault(); try { b.setPointerCapture(e.pointerId); } catch {} if (h) { b.classList.add("dn"); press(h); } else act(p); });
-  const up = () => { if (h) { b.classList.remove("dn"); release(h); } };
-  b.addEventListener("pointerup", up); b.addEventListener("pointercancel", up); b.addEventListener("lostpointercapture", up);
+document.querySelectorAll(".tb").forEach(b => {   // 회전(⟳) · 바로 내리기(⤓) · 보관
+  b.addEventListener("pointerdown", e => { e.preventDefault(); act(b.dataset.p); });
   b.addEventListener("contextmenu", e => e.preventDefault());
 });
+// 조이스틱: 손가락을 처음 댄 곳이 기준점. 좌/우로 밀면 이동(누르고 있으면 계속), 아래로 밀면 빨리 내리기, 손을 떼거나 가운데로 돌아오면 멈춤
+(() => {
+  const st = $("stick"), kn = $("knob"); let id = null, ox = 0, oy = 0;
+  const knob = (x, y) => { kn.style.left = x + "px"; kn.style.top = y + "px"; };
+  function apply(dx, dy) {
+    const T = 18, want = { left: dx < -T && -dx >= Math.abs(dy) * .6, right: dx > T && dx >= Math.abs(dy) * .6, down: dy > T && dy >= Math.abs(dx) * .6 };
+    for (const k in want) if (!want[k]) release(k);
+    for (const k in want) if (want[k]) press(k);
+  }
+  st.addEventListener("pointerdown", e => {
+    if (id !== null) return; e.preventDefault(); id = e.pointerId; try { st.setPointerCapture(id); } catch {}
+    const r = st.getBoundingClientRect(); ox = e.clientX; oy = e.clientY; knob(ox - r.left, oy - r.top);
+  });
+  st.addEventListener("pointermove", e => {
+    if (e.pointerId !== id) return;
+    const dx = e.clientX - ox, dy = e.clientY - oy, m = Math.hypot(dx, dy), k = m > 36 ? 36 / m : 1, r = st.getBoundingClientRect();
+    knob(ox - r.left + dx * k, oy - r.top + dy * k); apply(dx, dy);
+  });
+  const end = e => { if (e.pointerId !== id) return; id = null; apply(0, 0); kn.style.left = "50%"; kn.style.top = "50%"; };
+  st.addEventListener("pointerup", end); st.addEventListener("pointercancel", end); st.addEventListener("lostpointercapture", end);
+  st.addEventListener("contextmenu", e => e.preventDefault());
+})();
 $("bPause").onclick = togglePause;
 $("bSnd").onclick = () => { cfg.sound = !cfg.sound; save(); syncSnd(); SFX.rot(); };
 const syncSnd = () => { $("bSnd").textContent = cfg.sound ? "🔊" : "🔇"; };
@@ -627,7 +675,7 @@ addEventListener("beforeunload", netClose);
 
 // ---------------------------------------------------------------- 메뉴 화면
 const ov = $("ov");
-const KEYHELP = COARSE ? "아래 버튼으로 조작해요. ◀ ▶ 이동 · ▼ 빨리 내리기 · ⟲ ⟳ 회전 · 보관 · 바로 내리기" : "← → 이동 · ↓ 빨리 내리기 · ↑/X 회전 · Z 반대 회전<br>Space 바로 내리기 · C 보관 · P 일시정지";
+const KEYHELP = COARSE ? "왼쪽 조이스틱에 손가락을 대고 좌우로 밀면 이동, 아래로 밀면 빨리 내려요<br>⟳ 회전 · ⤓ 바로 내리기 · 보관" : "← → 이동 · ↓ 빨리 내리기 · ↑/X 회전 · Z 반대 회전<br>Space 바로 내리기 · C 보관 · P 일시정지";
 function showOv(name, a = {}) {
   if (!name) { ov.classList.remove("on"); ov.innerHTML = ""; return; }
   ov.innerHTML = SCREENS[name](a); ov.classList.add("on");
