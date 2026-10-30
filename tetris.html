@@ -492,23 +492,36 @@ document.querySelectorAll(".tb").forEach(b => {   // 회전(⟳) · 바로 내�
 });
 // 조이스틱: 손가락을 처음 댄 곳이 기준점. 좌/우로 밀면 이동(누르고 있으면 계속), 아래로 밀면 빨리 내리기, 손을 떼거나 가운데로 돌아오면 멈춤
 (() => {
-  const st = $("stick"), kn = $("knob"); let id = null, ox = 0, oy = 0;
+  const st = $("stick"), kn = $("knob"); let id = null, ox = 0, oy = 0, t0 = 0, far = 0, dir = 0, taken = 0;
+  const T = 18, S = 32;   // 밀기 시작 거리(px), 한 칸 더 가려면 더 끌어야 하는 거리(px)
   const knob = (x, y) => { kn.style.left = x + "px"; kn.style.top = y + "px"; };
   function apply(dx, dy) {
-    const T = 18, want = { left: dx < -T && -dx >= Math.abs(dy) * .6, right: dx > T && dx >= Math.abs(dy) * .6, down: dy > T && dy >= Math.abs(dx) * .6 };
-    for (const k in want) if (!want[k]) release(k);
-    for (const k in want) if (want[k]) press(k);
+    const ax = Math.abs(dx), want = ax > T && ax >= Math.abs(dy) * .6 ? Math.sign(dx) : 0;
+    if (want !== dir) {              // 방향이 바뀜: 바로 한 칸 가고, 계속 누르고 있으면 이어서 달린다
+      release("left"); release("right"); dir = want; taken = 0;
+      if (want) { press(want < 0 ? "left" : "right"); taken = 1; }
+    } else if (want) {               // 같은 방향으로 더 끌수록 한 칸씩 더 간다
+      const n = Math.floor((ax - T) / S) + 1;
+      while (taken < n) { if (state === "play") tryMove(want); taken++; }
+    }
+    if (dy > T && dy >= ax * .6) press("down"); else release("down");
   }
   st.addEventListener("pointerdown", e => {
     if (id !== null) return; e.preventDefault(); id = e.pointerId; try { st.setPointerCapture(id); } catch {}
-    const r = st.getBoundingClientRect(); ox = e.clientX; oy = e.clientY; knob(ox - r.left, oy - r.top);
+    const r = st.getBoundingClientRect(); ox = e.clientX; oy = e.clientY; t0 = performance.now(); far = 0; knob(ox - r.left, oy - r.top);
   });
   st.addEventListener("pointermove", e => {
     if (e.pointerId !== id) return;
     const dx = e.clientX - ox, dy = e.clientY - oy, m = Math.hypot(dx, dy), k = m > 36 ? 36 / m : 1, r = st.getBoundingClientRect();
-    knob(ox - r.left + dx * k, oy - r.top + dy * k); apply(dx, dy);
+    far = Math.max(far, m); knob(ox - r.left + dx * k, oy - r.top + dy * k); apply(dx, dy);
   });
-  const end = e => { if (e.pointerId !== id) return; id = null; apply(0, 0); kn.style.left = "50%"; kn.style.top = "50%"; };
+  const end = e => {
+    if (e.pointerId !== id) return; id = null; apply(0, 0); kn.style.left = "50%"; kn.style.top = "50%";
+    if (e.type === "pointerup" && far < T && performance.now() - t0 < 250 && state === "play") {   // 톡 치기: 양쪽 끝 ◀ ▶ 를 누르면 한 칸
+      const x = (ox - st.getBoundingClientRect().left) / st.offsetWidth;
+      if (x < .4) tryMove(-1); else if (x > .6) tryMove(1);
+    }
+  };
   st.addEventListener("pointerup", end); st.addEventListener("pointercancel", end); st.addEventListener("lostpointercapture", end);
   st.addEventListener("contextmenu", e => e.preventDefault());
 })();
@@ -675,7 +688,7 @@ addEventListener("beforeunload", netClose);
 
 // ---------------------------------------------------------------- 메뉴 화면
 const ov = $("ov");
-const KEYHELP = COARSE ? "왼쪽 조이스틱에 손가락을 대고 좌우로 밀면 이동, 아래로 밀면 빨리 내려요<br>⟳ 회전 · ⤓ 바로 내리기 · 보관" : "← → 이동 · ↓ 빨리 내리기 · ↑/X 회전 · Z 반대 회전<br>Space 바로 내리기 · C 보관 · P 일시정지";
+const KEYHELP = COARSE ? "왼쪽 조이스틱: ◀ ▶ 쪽을 톡 치면 한 칸, 밀면 이동(더 끌면 한 칸씩 더, 누르고 있으면 계속), 아래로 밀면 빨리 내려요<br>⟳ 회전 · ⤓ 바로 내리기 · 보관" : "← → 이동 · ↓ 빨리 내리기 · ↑/X 회전 · Z 반대 회전<br>Space 바로 내리기 · C 보관 · P 일시정지";
 function showOv(name, a = {}) {
   if (!name) { ov.classList.remove("on"); ov.innerHTML = ""; return; }
   ov.innerHTML = SCREENS[name](a); ov.classList.add("on");
