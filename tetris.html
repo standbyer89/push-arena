@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
 <title>테트리스</title>
-<meta name="description" content="혼자서 기록을 세우거나, 친구 최대 4명과 온라인으로 겨루는 테트리스. 콤보를 쌓으면 상대 모두에게 블록이 올라가요.">
+<meta name="description" content="혼자서 기록을 세우거나, 친구 최대 6명과 온라인으로 겨루는 테트리스. 줄을 지우면 상대에게 쓰레기 줄을 보내요.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A7%B1%3C/text%3E%3C/svg%3E">
 <style>
   :root { --bg:#0f1230; --card:#ffffff12; --line:#ffffff26; --text:#eef0ff; --muted:#a9b0d9; --accent:#ffd479; --cw:360px; --mw:74px; }
@@ -29,6 +29,7 @@
   .compact #opps { position:absolute; left:82.75%; width:14%; top:27.1%; flex-direction:column; justify-content:flex-start; gap:4px; z-index:2; }
   .compact .opp { width:100%; } .compact .opp .on { height:13px; font-size:9px; gap:1px; } .compact .opp .on span:nth-child(2) { display:none; }
   .compact canvas.mc { width:100%; border-radius:3px; }
+  .compact.vs #opps.many { display:grid; grid-template-columns:1fr 1fr; gap:4px 3px; left:81%; width:17.5%; align-content:start; }
   canvas { display:block; }
   canvas.mc { width:var(--mw); aspect-ratio:1/2; border-radius:6px; background:#0b0e24; }
   #wrap { position:relative; width:var(--cw); }
@@ -50,6 +51,7 @@
   .code { font-size:44px; font-weight:800; letter-spacing:.25em; color:var(--accent); padding-left:.25em; }
   input.code-in { width:120px; font:inherit; font-size:20px; letter-spacing:.2em; text-align:center; text-transform:uppercase; background:var(--card); border:1px solid var(--line); border-radius:10px; color:var(--text); padding:8px; user-select:text; -webkit-user-select:text; }
   .slots { display:flex; flex-direction:column; gap:5px; }
+  .slots.two { display:grid; grid-template-columns:1fr 1fr; } .slots.two .slot { padding:7px 8px; font-size:13px; min-width:0; white-space:nowrap; } .slots.two .slot small { font-size:10px; overflow:hidden; text-overflow:ellipsis; }
   .slot { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:10px; border:1px solid var(--line); background:var(--card); font-size:14px; }
   .slot.off { opacity:.4; border-style:dashed; } .slot small { margin-left:auto; color:var(--muted); }
   .rk { display:flex; align-items:center; gap:8px; padding:7px 10px; border-radius:10px; border:1px solid var(--line); background:var(--card); font-size:14px; }
@@ -98,11 +100,12 @@ let W = 470, SX = 330;   // 그림 전체 너비와 오른쪽 열 위치 (폰 �
 const COARSE = matchMedia("(pointer:coarse)").matches;
 const DAS = COARSE ? .17 : .15, ARR = COARSE ? .055 : .04, LOCK = .5, MAX_RESET = 15, CLEAR_T = .28;
 // 대전 규칙 — 테트리스 99 방식 (https://www.harddrop.com/wiki/Tetris_99, https://tetris.wiki/Combo)
-const LV_TIMES = [0, 10, 30, 50, 70, 90, 110, 130, 150, 170, 190];     // 이 시간(초)이 지나면 다음 속도 단계
+const LV_TIMES = [0, 15, 45, 75, 105, 135, 165, 195, 225, 255, 285];   // 이 시간(초)이 지나면 다음 속도 단계 (테트리스 99 표의 시간을 1.5배로 늘려 조금 느리게)
 const LV_FRAMES = [60, 50, 40, 30, 20, 10, 8, 6, 4, 2, 1];             // 단계별로 한 칸 내려오는 데 걸리는 프레임 수 (60프레임 = 1초)
 const COMBO_ATK = [0, 1, 1, 2, 2, 3, 3, 4, 4, 4, 5, 5, 5];             // 콤보 n번째에 더해지는 공격 줄 (13 이상은 5)
 const GARB_DELAY = 2.5, GARB_MAX = 12, PC_ATK = 4;                     // 받은 줄이 올라오기까지 2.5초 · 대기 최대 12줄 · 퍼펙트 클리어 +4
-const EMO = ["🐱", "🐻", "🐰", "🐧"], NAME = ["냥이", "곰돌", "토순", "펭귄"], TINT = ["#5ec2ff", "#ff6b81", "#7be495", "#ffd479"];
+const MAXP = 6;   // 한 방 최대 인원
+const EMO = ["🐱", "🐻", "🐰", "🐙", "🦔", "🐧"], NAME = ["냥이", "곰돌", "토순", "문어", "고슴이", "펭귄"], TINT = ["#5ec2ff", "#ff6b81", "#7be495", "#ffd479", "#c58bff", "#ff9f43"];
 const KEY = "tetris-v1";
 let cfg = { best:0, bestLines:0, sound:true, lvl:1 };
 try { Object.assign(cfg, JSON.parse(localStorage.getItem(KEY)) || {}); } catch {}
@@ -339,7 +342,7 @@ function layout() {
   const wide = vw >= 760 && vw > vh * 1.05; document.body.classList.toggle("wide", wide); document.body.classList.toggle("touch", COARSE); document.body.classList.toggle("compact", !wide);
   W = wide ? 470 : 400; SX = wide ? 330 : 324; cv.style.aspectRatio = W + " / " + H;
   const opps = $("opps"), home = wide ? $("stage") : $("wrap"); if (opps.parentNode !== home) home.appendChild(opps);   // 폰: 상대 판은 오른쪽 열 안에, 큰 화면: 판 옆에
-  let availH = vh - 40 - (COARSE ? 150 : 30) - 14, availW = vw - 16, mw = 124;
+  let availH = vh - 40 - (COARSE ? 150 : 30) - 14, availW = vw - 16, mw = opps.children.length > 3 ? 92 : 124;   // 상대가 4명 이상이면 작은 판을 더 작게
   if (vs && wide) availW -= 2 * mw + 20;
   const cw = Math.max(220, Math.min(availW, availH * W / H, 760));
   document.documentElement.style.setProperty("--cw", Math.floor(cw) + "px"); document.documentElement.style.setProperty("--mw", mw + "px");
@@ -571,8 +574,8 @@ function hostAccept(c) {
   const go = () => {
     const deny = why => { try { c.send({ t:"deny", why }); } catch {} setTimeout(() => { try { c.close(); } catch {} }, 400); };
     if (net.phase !== "lobby") return deny("이미 게임이 진행 중이에요.");
-    const slot = [1, 2, 3].find(s => !net.conns[s]);
-    if (slot == null) return deny("방이 가득 찼어요 (최대 4명).");
+    const slot = Array.from({ length:MAXP - 1 }, (_, i) => i + 1).find(s => !net.conns[s]);
+    if (slot == null) return deny(`방이 가득 찼어요 (최대 ${MAXP}명).`);
     net.conns[slot] = c; net.members = [0, ...Object.keys(net.conns).map(Number)].sort();
     c.on("data", m => hostMsg(slot, m));
     c.on("close", () => { if (net.conns[slot] === c) guestGone(slot); });
@@ -631,7 +634,7 @@ function hostStart() {
 }
 function startVs(seed, members) {
   net.members = members.slice(); net.phase = "playing"; net.snaps = {}; net.order = []; net.alive = {}; members.forEach(s => net.alive[s] = true);
-  const opps = $("opps"); clearOpps();
+  const opps = $("opps"); clearOpps(); opps.classList.toggle("many", members.length - 1 > 3);
   for (const s of members) if (s !== net.slot) {
     opps.insertAdjacentHTML("beforeend", `<div class="opp" id="o${s}"><div class="on"><span>${EMO[s]}</span><span>${NAME[s]}</span><i id="og${s}"></i></div><canvas class="mc" width="120" height="240"></canvas></div>`);
     oppCv[s] = $("o" + s).querySelector("canvas");
@@ -699,21 +702,21 @@ const SCREENS = {
     ${a.err ? `<div class="err">${a.err}</div>` : ""}
     <button class="btn main big" data-a="solo">🎯 혼자 하기</button>
     <div class="row">시작 레벨 <button class="btn" data-a="lv-">−</button><b>${cfg.lvl}</b><button class="btn" data-a="lv+">＋</button></div>
-    <button class="btn big" data-a="online">👥 온라인 대결 (2~4명)</button>
+    <button class="btn big" data-a="online">👥 온라인 대결 (2~${MAXP}명)</button>
     <div class="box">${KEYHELP}</div>
     <div class="note">${cfg.best ? `최고 점수 ${cfg.best.toLocaleString()} · 최다 ${cfg.bestLines}줄` : "첫 기록에 도전해 보세요"}</div></div>`,
-  online: a => `<div class="panel"><h2>👥 온라인 대결</h2><div class="sub">방 코드를 주고받으면 친구 최대 4명이 함께 겨뤄요</div>
+  online: a => `<div class="panel"><h2>👥 온라인 대결</h2><div class="sub">방 코드를 주고받으면 친구 최대 ${MAXP}명이 함께 겨뤄요</div>
     ${a.err ? `<div class="err">${a.err}</div>` : ""}
     <button class="btn main big" data-a="host">🏠 방 만들기</button>
     <div class="row"><input class="code-in" id="codeIn" maxlength="4" placeholder="방 코드" autocomplete="off"><button class="btn" data-a="join">참가하기</button></div>
-    <div class="box"><b>대결 규칙</b> (테트리스 99 방식)<br>· 더블 이상·T-스핀·콤보로 줄을 지우면 상대 <b>한 명</b>에게 쓰레기 줄을 보내요. 기본은 무작위, 상대 판을 누르면 그 사람만 노려요<br>· 받은 줄은 2.5초 뒤 올라오고(노랑→빨강), 그 전에 내가 줄을 지우면 막을 수 있어요<br>· 시간이 지날수록 블록이 빨라져요 (3분 10초에 최고 속도)<br>· 마지막까지 살아남으면 우승!</div>
+    <div class="box"><b>대결 규칙</b> (테트리스 99 방식)<br>· 더블 이상·T-스핀·콤보로 줄을 지우면 상대 <b>한 명</b>에게 쓰레기 줄을 보내요. 기본은 무작위, 상대 판을 누르면 그 사람만 노려요<br>· 받은 줄은 2.5초 뒤 올라오고(노랑→빨강), 그 전에 내가 줄을 지우면 막을 수 있어요<br>· 시간이 지날수록 블록이 빨라져요 (4분 45초에 최고 속도)<br>· 마지막까지 살아남으면 우승!</div>
     <button class="btn" data-a="menu">← 뒤로</button></div>`,
   joining: a => `<div class="panel"><h2>${a.text}</h2></div>`,
   lobby: () => {
     const link = location.origin + location.pathname + "?room=" + net.code;
     return `<div class="panel"><div class="sub">친구에게 이 코드를 알려 주세요</div><div class="code">${net.code}</div>
     <div class="row"><button class="btn" data-a="copycode">📋 코드 복사</button><button class="btn" data-a="copylink" data-link="${link}">🔗 초대 링크 복사</button></div>
-    <div class="slots">${[0, 1, 2, 3].map(s => net.members.includes(s)
+    <div class="slots two">${Array.from({ length:MAXP }, (_, s) => s).map(s => net.members.includes(s)
       ? `<div class="slot" style="border-color:${TINT[s]}88">${EMO[s]} ${NAME[s]}<small>${s === 0 ? "👑 방장" : ""}${s === net.slot ? " · 나" : ""}</small></div>`
       : `<div class="slot off">비어 있음<small>기다리는 중…</small></div>`).join("")}</div>
     ${net.host ? `<button class="btn main big" data-a="start" ${net.members.length < 2 ? "disabled" : ""}>${net.members.length < 2 ? "한 명 더 오면 시작해요" : `▶ ${net.members.length}명으로 시작`}</button>` : `<div class="sub">방장이 시작하길 기다리는 중…</div>`}
@@ -725,7 +728,7 @@ const SCREENS = {
     <div class="box">점수 <b>${score.toLocaleString()}</b><br>지운 줄 <b>${lines}</b> · 레벨 <b>${level()}</b><br>최고 점수 <b>${cfg.best.toLocaleString()}</b></div>
     <button class="btn main big" data-a="solo">🔁 다시 하기</button><button class="btn big" data-a="menu">메뉴로</button><a class="btn" href="./">🎮 게임 목록</a></div>`,
   results: m => `<div class="panel"><h2>${m.rank[0] === net.slot ? "🏆 우승!" : "게임 끝"}</h2>
-    <div class="slots">${m.rank.map((s, i) => `<div class="rk ${s === net.slot ? "me" : ""}">${["🥇", "🥈", "🥉", "4️⃣"][i]} ${EMO[s]} ${NAME[s]}${s === net.slot ? " (나)" : ""}<small>${m.st[s][0]}줄 · 공격 ${m.st[s][1]}</small></div>`).join("")}</div>
+    <div class="slots">${m.rank.map((s, i) => `<div class="rk ${s === net.slot ? "me" : ""}">${["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣"][i]} ${EMO[s]} ${NAME[s]}${s === net.slot ? " (나)" : ""}<small>${m.st[s][0]}줄 · 공격 ${m.st[s][1]}</small></div>`).join("")}</div>
     ${net.host ? `<button class="btn main big" data-a="tolobby">🔁 다시 하기 (대기실로)</button>` : `<div class="sub">방장이 다시 시작하길 기다리는 중…</div>`}
     <button class="btn" data-a="leave">나가기</button></div>`,
 };
