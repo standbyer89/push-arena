@@ -23,7 +23,8 @@
   .opp { width:var(--mw); min-width:0; }
   .opp .on { height:22px; font-size:11px; display:flex; align-items:center; gap:3px; white-space:nowrap; overflow:hidden; }
   .opp .on i { font-style:normal; color:#ff8a80; margin-left:auto; }
-  .opp.dead { opacity:.5; }
+  .opp { cursor:pointer; } .opp.dead { opacity:.5; cursor:default; }
+  .opp.tg canvas { outline:2px solid var(--accent); outline-offset:1px; } .opp.tg .on span:first-child::before { content:"🎯"; }
   canvas { display:block; }
   canvas.mc { width:var(--mw); aspect-ratio:1/2; border-radius:6px; background:#0b0e24; }
   #wrap { position:relative; width:var(--cw); }
@@ -86,7 +87,12 @@
 const $ = id => document.getElementById(id);
 const COLS = 10, ROWS = 22, HID = 2, VIS = 20, CELL = 30, W = 470, H = 620, BX = 16, BY = 10, SX = 330;
 const COARSE = matchMedia("(pointer:coarse)").matches;
-const DAS = .15, ARR = .04, LOCK = .5, MAX_RESET = 15, CLEAR_T = .28, LV_SEC = 20, GARB_CAP = 8;
+const DAS = .15, ARR = .04, LOCK = .5, MAX_RESET = 15, CLEAR_T = .28;
+// 대전 규칙 — 테트리스 99 방식 (https://www.harddrop.com/wiki/Tetris_99, https://tetris.wiki/Combo)
+const LV_TIMES = [0, 10, 30, 50, 70, 90, 110, 130, 150, 170, 190];     // 이 시간(초)이 지나면 다음 속도 단계
+const LV_FRAMES = [60, 50, 40, 30, 20, 10, 8, 6, 4, 2, 1];             // 단계별로 한 칸 내려오는 데 걸리는 프레임 수 (60프레임 = 1초)
+const COMBO_ATK = [0, 1, 1, 2, 2, 3, 3, 4, 4, 4, 5, 5, 5];             // 콤보 n번째에 더해지는 공격 줄 (13 이상은 5)
+const GARB_DELAY = 2.5, GARB_MAX = 12, PC_ATK = 4;                     // 받은 줄이 올라오기까지 2.5초 · 대기 최대 12줄 · 퍼펙트 클리어 +4
 const EMO = ["🐱", "🐻", "🐰", "🐧"], NAME = ["냥이", "곰돌", "토순", "펭귄"], TINT = ["#5ec2ff", "#ff6b81", "#7be495", "#ffd479"];
 const KEY = "tetris-v1";
 let cfg = { best:0, bestLines:0, sound:true, lvl:1 };
@@ -140,8 +146,10 @@ let gAcc, lockT, lockResets, lowestY, lastRot, lastKick, clearRows = [], clearT 
 let held = { left:false, right:false, down:false }, hdir = 0, dasT = 0, arrT = 0;
 let popups = [], shake = 0, pending = [], atkSent = 0, playT = 0, lvShown = 1, snapT = 0, lastSnapKey = "", myRank = 0;
 
-const level = () => mode === "vs" ? 1 + Math.floor(playT / LV_SEC) : cfg.lvl + Math.floor(lines / 10);
-const normalInterval = () => Math.max(.004, Math.pow(Math.max(.1, .8 - (level() - 1) * .007), level() - 1));
+const level = () => mode === "vs" ? LV_TIMES.filter(t => playT >= t).length : cfg.lvl + Math.floor(lines / 10);
+const normalInterval = () => mode === "vs" ? LV_FRAMES[level() - 1] / 60 : Math.max(.004, Math.pow(Math.max(.1, .8 - (level() - 1) * .007), level() - 1));
+const lvProgress = () => { const i = level() - 1; return i >= LV_TIMES.length - 1 ? 1 : (playT - LV_TIMES[i]) / (LV_TIMES[i + 1] - LV_TIMES[i]); };
+let target = null;   // 내가 직접 고른 공격 대상 (없으면 무작위)
 const pendingTotal = () => pending.reduce((a, p) => a + p.n, 0);
 const emptyBoard = () => Array.from({ length:ROWS }, () => Array(COLS).fill(0));
 const clearHeld = () => { held.left = held.right = held.down = false; hdir = 0; dasT = arrT = 0; document.querySelectorAll(".tb.dn").forEach(b => b.classList.remove("dn")); };
@@ -160,7 +168,7 @@ const pop = (a, b = "", col = "#ffd479") => { popups.push({ t:0, a, b, col }); i
 function newGame(o = {}) {
   mode = o.vs ? "vs" : "solo"; document.body.classList.toggle("vs", mode === "vs");
   board = emptyBoard(); rnd = o.seed != null ? rng(o.seed) : Math.random; queue = [];
-  hold = null; canHold = true; score = 0; lines = 0; combo = -1; b2b = false; pending = []; atkSent = 0; playT = 0; myRank = 0;
+  hold = null; canHold = true; score = 0; lines = 0; combo = -1; b2b = false; pending = []; atkSent = 0; playT = 0; myRank = 0; target = null;
   popups = []; shake = 0; gAcc = 0; clearHeld(); lastSnapKey = ""; snapT = 0; cur = null; clearRows = [];
   lvShown = level(); refill();
   $("bPause").textContent = mode === "vs" ? "🚪" : "⏸";
@@ -223,9 +231,9 @@ function lockPiece() {
 }
 function afterLock() {
   canHold = true;
-  if (pending.length) {
+  if (pending.length) {   // 받은 지 2.5초가 지난 줄만, 먼저 받은 순서대로 올라온다
     let rows = 0, topOut = false;
-    while (pending.length && rows < GARB_CAP) { const p = pending[0], k = Math.min(p.n, GARB_CAP - rows); topOut = addGarbage(k, p.hole) || topOut; p.n -= k; rows += k; if (!p.n) pending.shift(); }
+    while (pending.length && pending[0].age >= GARB_DELAY) { const p = pending.shift(); topOut = addGarbage(p.n, p.hole) || topOut; rows += p.n; }
     if (rows) { shake = .7; SFX.garb(); pop("쓰레기 줄 +" + rows, "", "#ff8a80"); }
     if (topOut) { die(); return; }
   }
@@ -251,18 +259,18 @@ function award(n, spin, full) {
   if (n > 0) {
     atk = spin === 2 ? [0, 2, 4, 6][n] : spin === 1 ? [0, 0, 1][Math.min(n, 2)] : [0, 0, 1, 2, 4][n];
     const hard = n === 4 || spin > 0;
-    if (hard && b2b) { pts = Math.floor(pts * 1.5); atk += 1; pop("백투백", "+1줄 공격", "#9be7ff"); }
+    if (hard && b2b) { pts = Math.floor(pts * 1.5); atk += 1; pop("백투백", mode === "vs" ? "+1줄 공격" : "×1.5", "#9be7ff"); }
     b2b = hard;
     combo++;
-    if (combo > 0) { pts += 50 * combo * lv; atk += Math.min(6, Math.ceil(combo / 2)); pop((combo + 1) + " 콤보", "+" + Math.min(6, Math.ceil(combo / 2)) + "줄 공격", "#ffb86b"); }
-    if (board.every((row, r) => full.includes(r) || row.every(v => !v))) { pts += 1000 * lv; atk += 10; pop("퍼펙트 클리어!", "", "#ff7ad9"); }
+    if (combo > 0) { const cb = COMBO_ATK[Math.min(combo, COMBO_ATK.length - 1)]; pts += 50 * combo * lv; atk += cb; pop((combo + 1) + " 콤보", mode === "vs" ? "+" + cb + "줄 공격" : "+" + 50 * combo * lv, "#ffb86b"); }
+    if (board.every((row, r) => full.includes(r) || row.every(v => !v))) { pts += 1000 * lv; atk += PC_ATK; pop("퍼펙트 클리어!", "", "#ff7ad9"); }
     lines += n; shake = Math.max(shake, n === 4 ? .8 : .3);
     if (n === 4 || spin) SFX.big(); else SFX.clear(n);
   } else combo = -1;
   score += pts;
   if (name) pop(name, pts ? "+" + pts : "", spin ? "#d9a7ff" : "#ffd479");
   if (mode === "vs" && atk > 0) {
-    let a = atk;
+    let a = atk;   // 보낼 줄로 먼저 내가 받을 줄을 막고, 남은 만큼만 상대에게 간다
     while (a > 0 && pending.length) { const p = pending[0], k = Math.min(a, p.n); p.n -= k; a -= k; if (!p.n) pending.shift(); }
     if (a > 0) { atkSent += a; sendAttack(a); }
   }
@@ -284,6 +292,7 @@ function die() {
 function update(dt) {
   for (const p of popups) p.t += dt; popups = popups.filter(p => p.t < 1.4);
   shake = Math.max(0, shake - dt * 3);
+  if (state === "play" || state === "clearing") for (const p of pending) p.age += dt;
   if (state === "count") {
     cd -= dt; const n = Math.max(0, Math.ceil(cd));
     if (n !== lastCd) { lastCd = n; if (n > 0) SFX.tick(); }
@@ -348,7 +357,8 @@ function draw() {
   const bw = COLS * CELL, bh = VIS * CELL;
   // 쓰레기 줄 예고 막대
   ctx.fillStyle = "rgba(255,255,255,.07)"; ctx.fillRect(4, BY, 8, bh);
-  const pt = Math.min(pendingTotal(), VIS); if (pt) { ctx.fillStyle = "#ff5a5f"; ctx.fillRect(4, BY + bh - pt * CELL, 8, pt * CELL); }
+  let my = BY + bh;   // 받을 줄: 노랑 = 아직 올라오지 않음, 빨강 = 다음 블록을 놓으면 올라옴
+  for (const p of pending) { const h = Math.min(p.n * CELL, my - BY); ctx.fillStyle = p.age >= GARB_DELAY ? "#ff5a5f" : "#ffd54f"; ctx.fillRect(4, my - h, 8, h - 1); my -= h; }
   // 판
   ctx.fillStyle = "#0b0e24"; ctx.fillRect(BX, BY, bw, bh);
   ctx.strokeStyle = "rgba(255,255,255,.05)"; ctx.lineWidth = 1; ctx.beginPath();
@@ -383,13 +393,14 @@ function draw() {
   // 오른쪽 열
   text("보관", SX, 24, 13, "#a9b0d9"); box(SX, 32, 130, 64);
   if (hold) preview(hold, SX + 65, 64, 18, canHold ? 1 : .35);
-  text("다음", SX, 120, 13, "#a9b0d9"); box(SX, 128, 130, 232);
-  if (board) for (let i = 0; i < 5; i++) preview(queue[i], SX + 65, 152 + i * 44, i ? 15 : 18);
+  text("다음", SX, 120, 13, "#a9b0d9"); box(SX, 128, 130, 64);
+  if (board) preview(queue[0], SX + 65, 160, 18);
+  const tgt = target != null && net.alive[target] ? EMO[target] + " " + NAME[target] : "🎲 무작위";
   const stats = mode === "vs"
-    ? [["속도", "Lv." + level()], ["콤보", combo >= 1 ? combo + 1 : "-"], ["보낸 줄", atkSent], ["지운 줄", lines]]
+    ? [["속도", "Lv." + level()], ["콤보", combo >= 1 ? combo + 1 : "-"], ["보낸 줄", atkSent], ["지운 줄", lines], ["공격 대상", tgt]]
     : [["점수", score.toLocaleString()], ["레벨", level()], ["줄", lines], ["최고", Math.max(cfg.best, score).toLocaleString()]];
-  stats.forEach(([k, v], i) => { const y = 386 + i * 56; text(k, SX, y, 12, "#a9b0d9"); text(String(v), SX, y + 26, 22, i === 0 ? "#ffd479" : "#eef0ff"); });
-  if (mode === "vs") { ctx.fillStyle = "rgba(255,255,255,.12)"; ctx.fillRect(SX, 386 + 36, 120, 4); ctx.fillStyle = "#ffd479"; ctx.fillRect(SX, 386 + 36, 120 * ((playT % LV_SEC) / LV_SEC), 4); }
+  stats.forEach(([k, v], i) => { const y = 226 + i * 66; text(k, SX, y, 12, "#a9b0d9"); text(String(v), SX, y + (i === 4 ? 24 : 27), i === 4 ? 15 : 24, i === 0 ? "#ffd479" : "#eef0ff"); });
+  if (mode === "vs") { ctx.fillStyle = "rgba(255,255,255,.12)"; ctx.fillRect(SX, 226 + 38, 120, 4); ctx.fillStyle = "#ffd479"; ctx.fillRect(SX, 226 + 38, 120 * lvProgress(), 4); }
   // 가운데 안내
   const mid = BX + bw / 2;
   if (state === "count") text(String(Math.max(1, Math.ceil(cd))), mid, BY + 330, 110, "#ffd479", "center", 800);
@@ -413,7 +424,7 @@ function drawOpps() {
     }
     if (dead) { g.fillStyle = "rgba(0,0,0,.55)"; g.fillRect(0, 0, c.width, c.height); g.fillStyle = "#eef0ff"; g.font = "700 22px system-ui,sans-serif"; g.textAlign = "center"; g.fillText("탈락", c.width / 2, c.height / 2); }
     const lab = $("og" + s); if (lab) lab.textContent = sn && sn.g ? "⚠" + sn.g : "";
-    $("o" + s).classList.toggle("dead", dead);
+    $("o" + s).classList.toggle("dead", dead); $("o" + s).classList.toggle("tg", target === s && !dead);
   }
 }
 
@@ -540,7 +551,7 @@ function guestMsg(m) {
     case "lobby": net.slot = m.you; net.members = m.members; net.phase = "lobby"; if (mode === "vs") { mode = "solo"; state = "idle"; document.body.classList.remove("vs"); clearOpps(); layout(); } showOv("lobby"); break;
     case "start": startVs(m.seed, m.members); break;
     case "s": net.snaps[m.p] = m; break;
-    case "atk": receiveAttack(m.n, m.hole); break;
+    case "atk": receiveAttack(m.n, m.hole, m.from); break;
     case "dead": net.alive[m.p] = false; break;
     case "over": showResults(m); break;
   }
@@ -548,7 +559,7 @@ function guestMsg(m) {
 function hostMsg(slot, m) {
   switch (m.t) {
     case "s": m.p = slot; net.snaps[slot] = m; relay(m, slot); break;
-    case "atk": routeAttack(slot, m.n, m.hole); break;
+    case "atk": routeAttack(slot, m.n, m.hole, m.to); break;
     case "dead": hostMarkDead(slot); break;
   }
 }
@@ -566,20 +577,27 @@ function startVs(seed, members) {
   }
   newGame({ vs:true, seed });
 }
+// 공격은 상대 한 명에게만 간다: 직접 고른 사람이 살아 있으면 그 사람, 아니면 살아 있는 상대 중 무작위 (테트리스 99의 기본 방식)
+function pickTarget() {
+  const c = net.members.filter(s => s !== net.slot && net.alive[s]); if (!c.length) return -1;
+  return target != null && c.includes(target) ? target : c[Math.floor(Math.random() * c.length)];
+}
 function sendAttack(n) {
+  const to = pickTarget(); if (to < 0) return;
   const hole = Math.floor(Math.random() * COLS);
-  if (net.host) routeAttack(net.slot, n, hole); else sendHost({ t:"atk", n, hole });
+  pop("⚔ " + EMO[to] + " +" + n, "", "#ffb86b");
+  if (net.host) routeAttack(net.slot, n, hole, to); else sendHost({ t:"atk", n, hole, to });
 }
-function routeAttack(from, n, hole) {
-  for (const s of net.members) {
-    if (s === from || !net.alive[s]) continue;
-    if (s === net.slot) receiveAttack(n, hole); else { try { net.conns[s].send({ t:"atk", n, hole, from }); } catch {} }
-  }
+function routeAttack(from, n, hole, to) {
+  if (to === from || !net.alive[to]) return;
+  if (to === net.slot) receiveAttack(n, hole, from); else { try { net.conns[to].send({ t:"atk", n, hole, from }); } catch {} }
 }
-function receiveAttack(n, hole) {
+function receiveAttack(n, hole, from) {
   if (mode !== "vs" || state === "dead" || state === "won") return;
-  pending.push({ n, hole }); SFX.warn(); pop("⚠ 쓰레기 줄 +" + n, "", "#ff8a80");
+  const k = Math.min(n, GARB_MAX - pendingTotal()); if (k <= 0) return;   // 대기 줄은 최대 12, 넘치는 건 사라진다
+  pending.push({ n:k, hole, age:0 }); SFX.warn(); pop("⚠ " + EMO[from] + " +" + k + "줄", "", "#ff8a80");
 }
+function setTarget(s) { target = target === s ? null : s; }
 function hostMarkDead(slot) {
   if (!net.alive[slot]) return; net.alive[slot] = false; net.order.push(slot);
   relay({ t:"dead", p:slot }, -1);
@@ -627,7 +645,7 @@ const SCREENS = {
     ${a.err ? `<div class="err">${a.err}</div>` : ""}
     <button class="btn main big" data-a="host">🏠 방 만들기</button>
     <div class="row"><input class="code-in" id="codeIn" maxlength="4" placeholder="방 코드" autocomplete="off"><button class="btn" data-a="join">참가하기</button></div>
-    <div class="box"><b>대결 규칙</b><br>· 콤보로 줄을 연속해서 지우면 <b>상대 모두</b>에게 쓰레기 줄이 올라가요<br>· 시간이 지날수록 블록이 점점 빨라져요<br>· 마지막까지 살아남으면 우승!</div>
+    <div class="box"><b>대결 규칙</b> (테트리스 99 방식)<br>· 더블 이상·T-스핀·콤보로 줄을 지우면 상대 <b>한 명</b>에게 쓰레기 줄을 보내요. 기본은 무작위, 상대 판을 누르면 그 사람만 노려요<br>· 받은 줄은 2.5초 뒤 올라오고(노랑→빨강), 그 전에 내가 줄을 지우면 막을 수 있어요<br>· 시간이 지날수록 블록이 빨라져요 (3분 10초에 최고 속도)<br>· 마지막까지 살아남으면 우승!</div>
     <button class="btn" data-a="menu">← 뒤로</button></div>`,
   joining: a => `<div class="panel"><h2>${a.text}</h2></div>`,
   lobby: () => {
@@ -672,6 +690,7 @@ function copy(s, btn) {
   const t = btn.textContent; btn.textContent = "복사됨 ✓"; setTimeout(() => { btn.textContent = t; }, 1200);
 }
 ov.addEventListener("click", e => { const b = e.target.closest("[data-a]"); if (b) ui(b.dataset.a, b); });
+$("opps").addEventListener("click", e => { const o = e.target.closest(".opp"); if (o && mode === "vs" && !o.classList.contains("dead")) setTarget(+o.id.slice(1)); });
 
 // ---------------------------------------------------------------- 시작
 let prev = performance.now();
